@@ -1,0 +1,9 @@
+# Built binaries — anchor to repo root so a cmd/<name> source dir is never ignored.
+/aws-backup-coverage
+/abc
+*.out
+*.sarif
+
+# Keep test fixtures and example inventories tracked.
+!testdata/**
+!examples/**

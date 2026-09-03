@@ -1,0 +1,57 @@
+{
+  "account": "111122223333",
+  "region": "eu-central-1",
+  "resources": [
+    {
+      "arn": "arn:aws:ec2:eu-central-1:111122223333:volume/vol-0a1b2c3d",
+      "type": "ebs",
+      "id": "vol-0a1b2c3d",
+      "tags": { "env": "prod", "backup": "yes" }
+    },
+    {
+      "arn": "arn:aws:ec2:eu-central-1:111122223333:volume/vol-deadbeef",
+      "type": "ebs",
+      "id": "vol-deadbeef",
+      "tags": { "env": "dev" }
+    },
+    {
+      "arn": "arn:aws:rds:eu-central-1:111122223333:db:payments-prod",
+      "type": "rds",
+      "id": "payments-prod",
+      "tags": { "env": "prod" }
+    },
+    {
+      "arn": "arn:aws:dynamodb:eu-central-1:111122223333:table/sessions",
+      "type": "dynamodb",
+      "id": "sessions"
+    },
+    {
+      "arn": "arn:aws:elasticfilesystem:eu-central-1:111122223333:file-system/fs-01aa22bb",
+      "type": "efs",
+      "id": "fs-01aa22bb",
+      "tags": { "backup": "yes" }
+    }
+  ],
+  "selections": [
+    {
+      "plan": "daily-35day",
+      "name": "tag-backup-yes",
+      "tagConditions": [{ "key": "backup", "value": "yes" }]
+    },
+    {
+      "plan": "prod-rds",
+      "name": "all-prod-dbs",
+      "resources": ["arn:aws:rds:eu-central-1:111122223333:db:*"]
+    }
+  ],
+  "recoveryPoints": [
+    {
+      "resourceArn": "arn:aws:ec2:eu-central-1:111122223333:volume/vol-0a1b2c3d",
+      "completedAt": "2026-09-03T04:00:00Z"
+    },
+    {
+      "resourceArn": "arn:aws:rds:eu-central-1:111122223333:db:payments-prod",
+      "completedAt": "2026-07-01T04:00:00Z"
+    }
+  ]
+}

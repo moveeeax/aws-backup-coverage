@@ -1,0 +1,24 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "BackupCoverageReadOnly",
+      "Effect": "Allow",
+      "Action": [
+        "sts:GetCallerIdentity",
+        "ec2:DescribeVolumes",
+        "rds:DescribeDBInstances",
+        "rds:ListTagsForResource",
+        "dynamodb:ListTables",
+        "dynamodb:DescribeTable",
+        "dynamodb:ListTagsOfResource",
+        "elasticfilesystem:DescribeFileSystems",
+        "backup:ListBackupPlans",
+        "backup:ListBackupSelections",
+        "backup:GetBackupSelection",
+        "backup:ListRecoveryPointsByResource"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
