@@ -1,7 +1,7 @@
 # aws-backup-coverage
 
 [![ci](https://github.com/moveeeax/aws-backup-coverage/actions/workflows/ci.yml/badge.svg)](https://github.com/moveeeax/aws-backup-coverage/actions/workflows/ci.yml)
-[![Go](https://img.shields.io/badge/go-1.24%2B-00ADD8?logo=go)](go.mod)
+[![Go](https://img.shields.io/badge/go-1.26%20%7C%201.27-00ADD8?logo=go)](go.mod)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 Find the AWS resources that AWS Backup silently forgot.
@@ -37,6 +37,8 @@ safe to run in CI. The ARN/tag matcher supports AWS-style `*` wildcards and
 honors a selection's `NotResources` exclusions.
 
 ## Install
+
+Requires Go 1.26 or newer (CI tests 1.26 and 1.27).
 
 ```sh
 go install github.com/moveeeax/aws-backup-coverage@latest
