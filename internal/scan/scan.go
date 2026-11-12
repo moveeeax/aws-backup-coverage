@@ -7,6 +7,7 @@ package scan
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -24,6 +25,9 @@ import (
 // Minimal read-only client interfaces (only the methods we call).
 type ec2API interface {
 	DescribeVolumes(context.Context, *ec2.DescribeVolumesInput, ...func(*ec2.Options)) (*ec2.DescribeVolumesOutput, error)
+}
+type regionsAPI interface {
+	DescribeRegions(context.Context, *ec2.DescribeRegionsInput, ...func(*ec2.Options)) (*ec2.DescribeRegionsOutput, error)
 }
 type rdsAPI interface {
 	DescribeDBInstances(context.Context, *rds.DescribeDBInstancesInput, ...func(*rds.Options)) (*rds.DescribeDBInstancesOutput, error)
@@ -53,9 +57,16 @@ type Scanner struct {
 	Backup  backupAPI
 }
 
-// New builds a Scanner from the default AWS config chain (env, shared config,
-// SSO, instance role). It resolves the caller account with STS.
-func New(ctx context.Context) (*Scanner, error) {
+// Session is a loaded AWS config plus the caller account. It hands out
+// per-region Scanners that share the same credentials.
+type Session struct {
+	Config  aws.Config
+	Account string
+}
+
+// NewSession loads the default AWS config chain (env, shared config, SSO,
+// instance role) and resolves the caller account with STS.
+func NewSession(ctx context.Context) (*Session, error) {
 	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
 		return nil, err
@@ -64,19 +75,82 @@ func New(ctx context.Context) (*Scanner, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sts GetCallerIdentity: %w", err)
 	}
+	return &Session{Config: cfg, Account: aws.ToString(id.Account)}, nil
+}
+
+// Scanner returns a Scanner for region. An empty region keeps the region from
+// the AWS config chain.
+func (s *Session) Scanner(region string) *Scanner {
+	cfg := s.Config.Copy()
+	if region != "" {
+		cfg.Region = region
+	}
 	return &Scanner{
-		Account: aws.ToString(id.Account),
+		Account: s.Account,
 		Region:  cfg.Region,
 		EC2:     ec2.NewFromConfig(cfg),
 		RDS:     rds.NewFromConfig(cfg),
 		DDB:     dynamodb.NewFromConfig(cfg),
 		EFS:     efs.NewFromConfig(cfg),
 		Backup:  backup.NewFromConfig(cfg),
-	}, nil
+	}
+}
+
+// EnabledRegions lists the regions enabled for the account
+// (ec2:DescribeRegions without AllRegions, so not-opted-in regions are left
+// out). The call goes to the configured region, or us-east-1 when none is set.
+func (s *Session) EnabledRegions(ctx context.Context) ([]string, error) {
+	cfg := s.Config.Copy()
+	if cfg.Region == "" {
+		cfg.Region = "us-east-1"
+	}
+	return listRegions(ctx, ec2.NewFromConfig(cfg))
+}
+
+func listRegions(ctx context.Context, api regionsAPI) ([]string, error) {
+	resp, err := api.DescribeRegions(ctx, &ec2.DescribeRegionsInput{})
+	if err != nil {
+		return nil, fmt.Errorf("ec2 DescribeRegions: %w", err)
+	}
+	var out []string
+	for _, r := range resp.Regions {
+		if name := aws.ToString(r.RegionName); name != "" {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// InventoryRegions scans each region with the Scanner that scannerFor returns
+// and merges the results into one inventory. Every resource and selection
+// carries its region, so a backup plan in one region never covers a resource
+// in another. Regions are scanned in order; the first error stops the run.
+func InventoryRegions(ctx context.Context, scannerFor func(region string) *Scanner, regions []string, types []coverage.ResourceType) (coverage.Inventory, error) {
+	var merged coverage.Inventory
+	for _, region := range regions {
+		sc := scannerFor(region)
+		inv, err := sc.Inventory(ctx, types)
+		if err != nil {
+			return merged, fmt.Errorf("region %s: %w", region, err)
+		}
+		if merged.Account == "" {
+			merged.Account = inv.Account
+		}
+		merged.Regions = append(merged.Regions, inv.Region)
+		merged.Resources = append(merged.Resources, inv.Resources...)
+		merged.Selections = append(merged.Selections, inv.Selections...)
+		merged.RecoveryPoints = append(merged.RecoveryPoints, inv.RecoveryPoints...)
+	}
+	if len(merged.Regions) == 1 {
+		merged.Region = merged.Regions[0]
+	}
+	return merged, nil
 }
 
 // Inventory enumerates resources of the requested types, backup plan selections
-// and each resource's latest recovery point.
+// and each resource's latest recovery point in the Scanner's region. Every
+// resource and selection is stamped with that region.
 func (s *Scanner) Inventory(ctx context.Context, types []coverage.ResourceType) (coverage.Inventory, error) {
 	want := map[coverage.ResourceType]bool{}
 	for _, t := range types {
@@ -115,9 +189,16 @@ func (s *Scanner) Inventory(ctx context.Context, types []coverage.ResourceType) 
 		inv.Resources = append(inv.Resources, rs...)
 	}
 
+	for i := range inv.Resources {
+		inv.Resources[i].Region = s.Region
+	}
+
 	sels, err := s.collectSelections(ctx)
 	if err != nil {
 		return inv, err
+	}
+	for i := range sels {
+		sels[i].Region = s.Region
 	}
 	inv.Selections = sels
 

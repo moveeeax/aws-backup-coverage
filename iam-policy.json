@@ -6,6 +6,7 @@
       "Effect": "Allow",
       "Action": [
         "sts:GetCallerIdentity",
+        "ec2:DescribeRegions",
         "ec2:DescribeVolumes",
         "rds:DescribeDBInstances",
         "rds:ListTagsForResource",

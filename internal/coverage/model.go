@@ -19,11 +19,14 @@ const (
 var AllTypes = []ResourceType{EBS, RDS, DynamoDB, EFS}
 
 // Resource is a single backup-eligible resource discovered in an account/region.
+// Region is optional in an inventory file; when empty the inventory's Region
+// applies.
 type Resource struct {
-	ARN  string            `json:"arn"`
-	Type ResourceType      `json:"type"`
-	ID   string            `json:"id"`
-	Tags map[string]string `json:"tags,omitempty"`
+	ARN    string            `json:"arn"`
+	Type   ResourceType      `json:"type"`
+	ID     string            `json:"id"`
+	Region string            `json:"region,omitempty"`
+	Tags   map[string]string `json:"tags,omitempty"`
 }
 
 // TagCondition is a single STRINGEQUALS tag match on a backup plan selection.
@@ -38,9 +41,14 @@ type TagCondition struct {
 // selected when it is not excluded by NotResources AND (it matches one of the
 // Resources ARN patterns OR it satisfies every TagCondition). A selection with
 // neither Resources nor TagConditions matches nothing.
+//
+// Backup plans are regional, so a selection only covers resources in its own
+// Region. An empty Region falls back to the inventory's Region; if either side
+// is still unknown the region check is skipped.
 type Selection struct {
 	Plan          string         `json:"plan"`
 	Name          string         `json:"name,omitempty"`
+	Region        string         `json:"region,omitempty"`
 	Resources     []string       `json:"resources,omitempty"`
 	NotResources  []string       `json:"notResources,omitempty"`
 	TagConditions []TagCondition `json:"tagConditions,omitempty"`
@@ -52,10 +60,13 @@ type RecoveryPoint struct {
 	CompletedAt time.Time `json:"completedAt"`
 }
 
-// Inventory is everything needed to compute coverage for one account/region.
+// Inventory is everything needed to compute coverage for one account and one
+// or more regions. A single-region inventory sets Region; a multi-region one
+// lists Regions and sets Region on every resource and selection.
 type Inventory struct {
 	Account        string          `json:"account,omitempty"`
 	Region         string          `json:"region,omitempty"`
+	Regions        []string        `json:"regions,omitempty"`
 	Resources      []Resource      `json:"resources"`
 	Selections     []Selection     `json:"selections"`
 	RecoveryPoints []RecoveryPoint `json:"recoveryPoints"`
@@ -99,11 +110,19 @@ type Summary struct {
 	Stale     int `json:"stale"`
 }
 
+// RegionSummary is the per-status count for the findings of one region.
+type RegionSummary struct {
+	Region string `json:"region"`
+	Summary
+}
+
 // Report bundles the inventory metadata, findings and summary for output.
+// Regions holds one summary per region present in the findings.
 type Report struct {
-	Account    string    `json:"account,omitempty"`
-	Region     string    `json:"region,omitempty"`
-	Findings   []Finding `json:"findings"`
-	Summary    Summary   `json:"summary"`
-	StaleAfter string    `json:"staleAfter"`
+	Account    string          `json:"account,omitempty"`
+	Region     string          `json:"region,omitempty"`
+	Findings   []Finding       `json:"findings"`
+	Summary    Summary         `json:"summary"`
+	Regions    []RegionSummary `json:"regions,omitempty"`
+	StaleAfter string          `json:"staleAfter"`
 }

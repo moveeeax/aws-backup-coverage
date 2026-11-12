@@ -179,3 +179,54 @@ func TestShouldFail(t *testing.T) {
 		t.Error("expected error for invalid --fail-on")
 	}
 }
+
+// A backup plan is regional: a selection in eu-central-1 whose ARN pattern
+// uses a region wildcard must not cover a volume in us-east-1.
+func TestClassifyRegionScoped(t *testing.T) {
+	inv := Inventory{
+		Account: "111122223333",
+		Regions: []string{"eu-central-1", "us-east-1"},
+		Resources: []Resource{
+			{ARN: "arn:aws:ec2:eu-central-1:111122223333:volume/vol-eu", Type: EBS, ID: "vol-eu", Region: "eu-central-1"},
+			{ARN: "arn:aws:ec2:us-east-1:111122223333:volume/vol-us", Type: EBS, ID: "vol-us", Region: "us-east-1"},
+		},
+		Selections: []Selection{
+			{Plan: "eu-daily", Region: "eu-central-1", Resources: []string{"arn:aws:ec2:*:*:volume/*"}},
+		},
+		RecoveryPoints: []RecoveryPoint{
+			{ResourceARN: "arn:aws:ec2:eu-central-1:111122223333:volume/vol-eu", CompletedAt: parseT("2026-09-03T06:00:00Z")},
+		},
+	}
+	findings, sum := Classify(inv, Options{Now: mustTime(t, "2026-09-03T12:00:00Z"), StaleAfter: 24 * time.Hour})
+	if sum.Covered != 1 || sum.Uncovered != 1 {
+		t.Fatalf("summary = %+v, want 1 covered (eu), 1 uncovered (us)", sum)
+	}
+	us := findByARN(findings, "arn:aws:ec2:us-east-1:111122223333:volume/vol-us")
+	if us == nil || us.Status != StatusUncovered {
+		t.Fatalf("vol-us = %+v, want uncovered: eu plan must not reach us-east-1", us)
+	}
+
+	byRegion := SummarizeByRegion(findings)
+	if len(byRegion) != 2 || byRegion[0].Region != "eu-central-1" || byRegion[1].Region != "us-east-1" {
+		t.Fatalf("region summaries = %+v, want eu-central-1 then us-east-1", byRegion)
+	}
+	if byRegion[0].Covered != 1 || byRegion[1].Uncovered != 1 || byRegion[1].Total != 1 {
+		t.Fatalf("region counts = %+v", byRegion)
+	}
+}
+
+// A single-region inventory file without per-resource regions inherits the
+// inventory Region on findings, and its selections still match.
+func TestClassifyInheritsInventoryRegion(t *testing.T) {
+	inv := baseInventory()
+	findings, _ := Classify(inv, Options{Now: mustTime(t, "2026-09-03T12:00:00Z"), StaleAfter: 7 * 24 * time.Hour})
+	for _, f := range findings {
+		if f.Resource.Region != "eu-central-1" {
+			t.Fatalf("%s region = %q, want inventory region", f.Resource.ID, f.Resource.Region)
+		}
+	}
+	cov := findByARN(findings, "arn:aws:ec2:eu-central-1:111122223333:volume/vol-tagcov")
+	if cov == nil || cov.Status != StatusCovered {
+		t.Fatalf("vol-tagcov = %+v, want covered", cov)
+	}
+}

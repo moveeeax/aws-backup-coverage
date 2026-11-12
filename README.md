@@ -17,14 +17,18 @@ say "we have AWS Backup" while whole resources sit with **zero recovery points**
 
 ## How it works
 
-1. Enumerate backup-eligible resources in the account/region: EBS volumes
+1. Enumerate backup-eligible resources in the account, in one or more regions
+   (`--region`, `--all-regions`; default is the region from the AWS config
+   chain): EBS volumes
    (`ec2:DescribeVolumes`), RDS instances (`rds:DescribeDBInstances`), DynamoDB
    tables (`dynamodb:ListTables`/`DescribeTable`), EFS filesystems
    (`elasticfilesystem:DescribeFileSystems`).
 2. Read every backup plan and its selections
    (`backup:ListBackupPlans`/`ListBackupSelections`/`GetBackupSelection`),
    normalizing both ARN patterns and tag conditions (`ListOfTags` and the newer
-   `Conditions.StringEquals`).
+   `Conditions.StringEquals`). Backup plans are regional, so a selection only
+   covers resources in its own region, even when its ARN pattern uses `*` for
+   the region.
 3. For each resource, look up its latest recovery point
    (`backup:ListRecoveryPointsByResource`) and classify it:
    - **uncovered** — no selection matches it;
@@ -60,6 +64,12 @@ aws-backup-coverage check --fail-on uncovered --output sarif > backup.sarif
 
 # Treat a recovery point older than 3 days as stale
 aws-backup-coverage check --stale-after 3d
+
+# Scan two regions in one run (repeat the flag or comma-separate)
+aws-backup-coverage check --region eu-central-1 --region us-east-1
+
+# Scan every region enabled for the account
+aws-backup-coverage check --all-regions --fail-on uncovered
 ```
 
 Credentials come from the standard AWS chain (env vars, shared config, SSO,
@@ -73,15 +83,48 @@ AWS — handy for tests, demos, and reproducing a report:
 
 ```console
 $ aws-backup-coverage check --from-file examples/inventory.json
-STATUS     TYPE      RESOURCE       DETAIL
-uncovered  dynamodb  sessions       no backup plan selection matches this resource
-uncovered  ebs       vol-deadbeef   no backup plan selection matches this resource
-stale      efs       fs-01aa22bb    covered by daily-35day but has no recovery point
-stale      rds       payments-prod  latest recovery point 2026-07-01T04:00:00Z is older than 168h0m0s
-covered    ebs       vol-0a1b2c3d   covered by daily-35day
+STATUS     REGION        TYPE      RESOURCE       DETAIL
+uncovered  eu-central-1  dynamodb  sessions       no backup plan selection matches this resource
+uncovered  eu-central-1  ebs       vol-deadbeef   no backup plan selection matches this resource
+stale      eu-central-1  efs       fs-01aa22bb    covered by daily-35day but has no recovery point
+stale      eu-central-1  rds       payments-prod  latest recovery point 2026-07-01T04:00:00Z is older than 168h0m0s
+covered    eu-central-1  ebs       vol-0a1b2c3d   covered by daily-35day
 
 5 resources: 1 covered, 2 stale, 2 uncovered (stale-after 168h0m0s)
 ```
+
+### Multiple regions
+
+`--region` (repeatable, or comma-separated) scans the listed regions;
+`--all-regions` scans every region `ec2:DescribeRegions` reports as enabled for
+the account (regions that are not opted in are skipped). Regions are scanned
+one after another and the first AWS error stops the run, naming the region.
+Both flags conflict with each other and with `--from-file`.
+
+All findings go into one report. The table gets a per-region summary after the
+total, JSON findings carry `resource.region` plus a `regions` array of
+per-region counts, and SARIF results carry the region in the message and in
+`properties.region`. `--fail-on` applies to the combined findings.
+
+An inventory file can hold several regions: set `region` on each resource and
+selection (see [`examples/inventory-multi-region.json`](examples/inventory-multi-region.json)).
+In a single-region file, resources and selections without `region` inherit the
+top-level `region`.
+
+```console
+$ aws-backup-coverage check --from-file examples/inventory-multi-region.json --stale-after 3650d
+STATUS     REGION        TYPE  RESOURCE      DETAIL
+uncovered  us-east-1     ebs   vol-0e5f6a7b  no backup plan selection matches this resource
+covered    eu-central-1  ebs   vol-0a1b2c3d  covered by daily-35day
+covered    us-east-1     rds   orders-prod   covered by us-rds-daily
+
+3 resources: 2 covered, 0 stale, 1 uncovered (stale-after 87600h0m0s)
+  eu-central-1:  1 resources: 1 covered, 0 stale, 0 uncovered
+  us-east-1:     2 resources: 1 covered, 0 stale, 1 uncovered
+```
+
+Here `vol-0e5f6a7b` carries `backup=yes`, but the only plan selecting that tag
+lives in eu-central-1, so the us-east-1 volume is uncovered.
 
 ## Flags
 
@@ -91,6 +134,8 @@ covered    ebs       vol-0a1b2c3d   covered by daily-35day
 | `--output`, `-o` | `table` | `table`, `json`, or `sarif` |
 | `--stale-after` | `7d` | age at which a covered resource is stale (`24h`, `3d`, …) |
 | `--fail-on` | `none` | exit non-zero at `stale` or `uncovered` |
+| `--region` | config chain | region to scan; repeat or comma-separate for several |
+| `--all-regions` | `false` | scan every region enabled for the account |
 | `--from-file` | — | classify an inventory JSON instead of calling AWS |
 
 ## Exit codes
