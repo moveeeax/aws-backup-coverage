@@ -35,3 +35,4 @@ jobs:
           ./aws-backup-coverage check --from-file examples/inventory.json
           ./aws-backup-coverage check --from-file examples/inventory.json -o sarif > /tmp/out.sarif
           test -s /tmp/out.sarif
+          ./aws-backup-coverage check --from-file examples/inventory-multi-region.json

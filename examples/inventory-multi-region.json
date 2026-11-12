@@ -1,0 +1,45 @@
+{
+  "account": "111122223333",
+  "regions": ["eu-central-1", "us-east-1"],
+  "resources": [
+    {
+      "arn": "arn:aws:ec2:eu-central-1:111122223333:volume/vol-0a1b2c3d",
+      "type": "ebs",
+      "id": "vol-0a1b2c3d",
+      "region": "eu-central-1",
+      "tags": { "backup": "yes" }
+    },
+    {
+      "arn": "arn:aws:ec2:us-east-1:111122223333:volume/vol-0e5f6a7b",
+      "type": "ebs",
+      "id": "vol-0e5f6a7b",
+      "region": "us-east-1",
+      "tags": { "backup": "yes" }
+    },
+    {
+      "arn": "arn:aws:rds:us-east-1:111122223333:db:orders-prod",
+      "type": "rds",
+      "id": "orders-prod",
+      "region": "us-east-1",
+      "tags": { "env": "prod" }
+    }
+  ],
+  "selections": [
+    {
+      "plan": "daily-35day",
+      "name": "tagged",
+      "region": "eu-central-1",
+      "tagConditions": [{ "key": "backup", "value": "yes" }]
+    },
+    {
+      "plan": "us-rds-daily",
+      "name": "all-rds",
+      "region": "us-east-1",
+      "resources": ["arn:aws:rds:us-east-1:111122223333:db:*"]
+    }
+  ],
+  "recoveryPoints": [
+    { "resourceArn": "arn:aws:ec2:eu-central-1:111122223333:volume/vol-0a1b2c3d", "completedAt": "2026-11-01T04:00:00Z" },
+    { "resourceArn": "arn:aws:rds:us-east-1:111122223333:db:orders-prod", "completedAt": "2026-11-01T04:00:00Z" }
+  ]
+}

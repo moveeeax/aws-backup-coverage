@@ -18,18 +18,38 @@ func JSON(w io.Writer, rep coverage.Report) error {
 }
 
 // Table writes an aligned, human-readable table followed by a summary line.
+// When the report spans more than one region, a summary line per region
+// follows the total.
 func Table(w io.Writer, rep coverage.Report) error {
 	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, "STATUS\tTYPE\tRESOURCE\tDETAIL")
+	fmt.Fprintln(tw, "STATUS\tREGION\tTYPE\tRESOURCE\tDETAIL")
 	for _, f := range rep.Findings {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", f.Status, f.Resource.Type, f.Resource.ID, f.Reason)
+		region := f.Resource.Region
+		if region == "" {
+			region = "-"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", f.Status, region, f.Resource.Type, f.Resource.ID, f.Reason)
 	}
 	if err := tw.Flush(); err != nil {
 		return err
 	}
-	_, err := fmt.Fprintf(w, "\n%d resources: %d covered, %d stale, %d uncovered (stale-after %s)\n",
-		rep.Summary.Total, rep.Summary.Covered, rep.Summary.Stale, rep.Summary.Uncovered, rep.StaleAfter)
-	return err
+	if _, err := fmt.Fprintf(w, "\n%d resources: %d covered, %d stale, %d uncovered (stale-after %s)\n",
+		rep.Summary.Total, rep.Summary.Covered, rep.Summary.Stale, rep.Summary.Uncovered, rep.StaleAfter); err != nil {
+		return err
+	}
+	if len(rep.Regions) < 2 {
+		return nil
+	}
+	tw = tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+	for _, r := range rep.Regions {
+		region := r.Region
+		if region == "" {
+			region = "-"
+		}
+		fmt.Fprintf(tw, "  %s:\t%d resources: %d covered, %d stale, %d uncovered\n",
+			region, r.Total, r.Covered, r.Stale, r.Uncovered)
+	}
+	return tw.Flush()
 }
 
 // SARIF 2.1.0 minimal schema.
@@ -71,10 +91,11 @@ type sarifText struct {
 }
 
 type sarifResult struct {
-	RuleID    string          `json:"ruleId"`
-	Level     string          `json:"level"`
-	Message   sarifText       `json:"message"`
-	Locations []sarifLocation `json:"locations"`
+	RuleID     string            `json:"ruleId"`
+	Level      string            `json:"level"`
+	Message    sarifText         `json:"message"`
+	Locations  []sarifLocation   `json:"locations"`
+	Properties map[string]string `json:"properties,omitempty"`
 }
 
 type sarifLocation struct {
@@ -133,14 +154,19 @@ func SARIF(w io.Writer, rep coverage.Report) error {
 		if f.Status == coverage.StatusUncovered {
 			ruleID = "backup-uncovered"
 		}
-		log.Runs[0].Results = append(log.Runs[0].Results, sarifResult{
+		res := sarifResult{
 			RuleID:  ruleID,
 			Level:   levelFor(f.Status),
 			Message: sarifText{Text: fmt.Sprintf("%s (%s): %s", f.Resource.ID, f.Resource.Type, f.Reason)},
 			Locations: []sarifLocation{{
 				PhysicalLocation: sarifPhysical{ArtifactLocation: sarifArtifact{URI: f.Resource.ARN}},
 			}},
-		})
+		}
+		if f.Resource.Region != "" {
+			res.Message.Text = fmt.Sprintf("%s (%s, %s): %s", f.Resource.ID, f.Resource.Type, f.Resource.Region, f.Reason)
+			res.Properties = map[string]string{"region": f.Resource.Region}
+		}
+		log.Runs[0].Results = append(log.Runs[0].Results, res)
 	}
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")

@@ -47,8 +47,12 @@ func wildcardMatch(pattern, arn string) bool {
 	return true
 }
 
-// covers reports whether the selection assigns the resource to its plan.
+// covers reports whether the selection assigns the resource to its plan. Both
+// regions must already be resolved against the inventory default.
 func (s Selection) covers(r Resource) bool {
+	if s.Region != "" && r.Region != "" && s.Region != r.Region {
+		return false
+	}
 	for _, p := range s.NotResources {
 		if wildcardMatch(p, r.ARN) {
 			return false
@@ -96,14 +100,25 @@ func Classify(inv Inventory, opts Options) ([]Finding, Summary) {
 		typeFilter[t] = true
 	}
 
+	sels := make([]Selection, len(inv.Selections))
+	for i, sel := range inv.Selections {
+		if sel.Region == "" {
+			sel.Region = inv.Region
+		}
+		sels[i] = sel
+	}
+
 	var findings []Finding
 	for _, r := range inv.Resources {
 		if len(typeFilter) > 0 && !typeFilter[r.Type] {
 			continue
 		}
+		if r.Region == "" {
+			r.Region = inv.Region
+		}
 
 		var plans []string
-		for _, sel := range inv.Selections {
+		for _, sel := range sels {
 			if sel.covers(r) {
 				plans = append(plans, sel.Plan)
 			}
@@ -157,6 +172,33 @@ func Classify(inv Inventory, opts Options) ([]Finding, Summary) {
 		}
 	}
 	return findings, sum
+}
+
+// SummarizeByRegion counts findings per resource region, sorted by region
+// name. Findings without a region are grouped under an empty region name.
+func SummarizeByRegion(findings []Finding) []RegionSummary {
+	idx := map[string]int{}
+	var out []RegionSummary
+	for _, f := range findings {
+		i, ok := idx[f.Resource.Region]
+		if !ok {
+			i = len(out)
+			idx[f.Resource.Region] = i
+			out = append(out, RegionSummary{Region: f.Resource.Region})
+		}
+		s := &out[i].Summary
+		s.Total++
+		switch f.Status {
+		case StatusCovered:
+			s.Covered++
+		case StatusUncovered:
+			s.Uncovered++
+		case StatusStale:
+			s.Stale++
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Region < out[j].Region })
+	return out
 }
 
 // ShouldFail reports whether any finding is at or worse than the failOn
